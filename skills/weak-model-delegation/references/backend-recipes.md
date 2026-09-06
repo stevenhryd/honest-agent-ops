@@ -1,142 +1,143 @@
-# Resep per backend — sintaks & batasan terdokumentasi
+# Per-backend recipes — syntax and documented limitations
 
-Diverifikasi 1 Sep 2026 dari dokumentasi resmi masing-masing. Kalau satu baris di sini bertabrakan
-dengan ingatan, dokumen resminya yang menang — API ini berubah cepat.
+Verified 1 Sep 2026 against each project's official documentation. If a line here conflicts with your
+recollection, the official document wins — these APIs move fast.
 
 ---
 
-## llama.cpp (Qwen lokal, `local-llm`, port :8080)
+## llama.cpp (local Qwen, `local-llm`, port :8080)
 
-Sumber: `grammars/README.md` di repo llama.cpp.
+Source: `grammars/README.md` in the llama.cpp repository.
 
-### Memberi tata bahasa
+### Supplying a grammar
 
 ```bash
-llama-cli -m MODEL --grammar-file grammars/skema.gbnf -p 'PROMPT'
-llama-cli -m MODEL --grammar 'root ::= "ya" | "tidak"' -p 'PROMPT'
-llama-cli -m MODEL -j '{"type":"object","properties":{"nama":{"type":"string"}}}'   # -j / --json
+llama-cli -m MODEL --grammar-file grammars/schema.gbnf -p 'PROMPT'
+llama-cli -m MODEL --grammar 'root ::= "yes" | "no"' -p 'PROMPT'
+llama-cli -m MODEL -j '{"type":"object","properties":{"name":{"type":"string"}}}'   # -j / --json
 ```
 
 `llama-server`:
-- endpoint completion → field body `grammar` **atau** `json_schema`
+- completion endpoint → body field `grammar` **or** `json_schema`
 - `/chat/completions` → field `response_format`
-- ahead-of-time: `examples/json_schema_to_grammar.py`
+- ahead of time: `examples/json_schema_to_grammar.py`
 
 > "The JSON schema is only used to constrain the model output and is **not injected into the prompt**."
 
-Artinya prompt tetap harus menjelaskan bentuk yang diinginkan; grammar hanya melarang penyimpangan.
+Which means the prompt must still describe the shape you want; the grammar only forbids deviation.
 
-### Sintaks GBNF secukupnya
+### Enough GBNF syntax
 
-| Unsur | Bentuk |
+| Element | Form |
 |---|---|
-| Non-terminal | huruf kecil berstrip: `move`, `nilai-uang` |
-| Terminal | `"1"` atau rentang `[1-9]`, negasi `[^\n]` |
-| Urutan | `"1. " move " " move "\n"` |
-| Alternatif | `move ::= pion \| bukan-pion \| rokade` |
-| Grup | `(x \| y)` |
-| Pengulangan | `*` `+` `?` `{m}` `{m,n}` |
-| Token khusus | `<think>`, `<[1000]>` |
-| Komentar | `#` |
+| Non-terminal | lowercase with hyphens: `move`, `money-value` |
+| Terminal | `"1"` or a range `[1-9]`, negation `[^\n]` |
+| Sequence | `"1. " move " " move "\n"` |
+| Alternation | `move ::= pawn \| non-pawn \| castling` |
+| Group | `(x \| y)` |
+| Repetition | `*` `+` `?` `{m}` `{m,n}` |
+| Special token | `<think>`, `<[1000]>` |
+| Comment | `#` |
 
-Aturan `root` menentukan bentuk keluaran keseluruhan. Unicode didukung penuh.
+The `root` rule defines the overall output shape. Unicode is fully supported.
 
-### Batasan yang terdokumentasi (jangan ditemukan sendiri lewat trial-error)
+### Documented limitations (do not rediscover these by trial and error)
 
-- `additionalProperties` **default `false`** demi performa.
-- `prefixItems` **rusak** — pakai `items`.
-- `$ref` **bersarang rusak**; referensi skema jarak jauh tak didukung di versi C++.
-- Batasan numerik hanya untuk `"type": "integer"`, **bukan** `"number"`.
-- `pattern` wajib diawali `^` dan diakhiri `$`.
-- Tak ada `uniqueItems`, `contains`, `not`, maupun konstruksi kondisional.
-- **Performa:** `x? x? x? …` bikin sampling sangat lambat; tulis `x{0,N}`.
+- `additionalProperties` **defaults to `false`** for performance.
+- `prefixItems` is **broken** — use `items`.
+- **Nested `$ref` is broken**; remote schema references are unsupported in the C++ version.
+- Numeric bounds apply only to `"type": "integer"`, **not** `"number"`.
+- `pattern` must start with `^` and end with `$`.
+- No `uniqueItems`, `contains`, `not`, or conditional constructs.
+- **Performance:** `x? x? x? …` makes sampling very slow; write `x{0,N}`.
 
 ---
 
 ## vLLM
 
-Sumber: dokumentasi Structured Outputs vLLM.
+Source: the vLLM Structured Outputs documentation.
 
-Lima bentuk: `choice` · `regex` · `json` (JSON Schema) · `grammar` (EBNF bebas-konteks) ·
-`structural_tag` (JSON Schema di dalam tag tertentu).
+Five forms: `choice` · `regex` · `json` (JSON Schema) · `grammar` (context-free EBNF) ·
+`structural_tag` (a JSON Schema inside a particular tag).
 
-Backend: `xgrammar`, `guidance` (dua-duanya regex gaya Rust), plus mode `auto` yang memilih sendiri
-berdasarkan isi permintaan. `outlines` dan `lm-format-enforcer` disebut sebagai backend lain dengan
-dialek regex berbeda (`lm-format-enforcer` memakai `re` Python).
+Backends: `xgrammar`, `guidance` (both Rust-style regex), plus an `auto` mode that picks one based on the
+request contents. `outlines` and `lm-format-enforcer` are named as alternative backends with different
+regex dialects (`lm-format-enforcer` uses Python's `re`).
 
-**Dua hal yang paling sering menjatuhkan:**
-1. `guided_json` / `guided_regex` / dkk. **dihapus di v0.12.0** → pakai parameter `structured_outputs`.
-2. Pada model ber-reasoning (mis. **Qwen3 Coder**) structured output **nonaktif** kecuali dinyalakan:
+**The two things that trip people up most:**
+1. `guided_json` / `guided_regex` and friends were **removed in v0.12.0** → use the `structured_outputs`
+   parameter.
+2. On reasoning models (e.g. **Qwen3 Coder**) structured output is **off** unless enabled:
    `--structured-outputs-config.enable_in_reasoning=True`.
 
-Tersedia lewat endpoint OpenAI-compatible maupun inferensi offline via `SamplingParams`.
+Available through the OpenAI-compatible endpoint and through offline inference via `SamplingParams`.
 
 ---
 
 ## Anthropic / Claude
 
-Sumber: skill `claude-api` (dokumentasi resmi, cache 2026-06-24). Untuk kode per bahasa, panggil skill
-itu — jangan menebak nama SDK dari bentuk cURL.
+Source: the `claude-api` skill (official documentation, cached 2026-06-24). For per-language code, invoke
+that skill — do not guess SDK names from the shape of a cURL example.
 
 ### Strict tool use
 
-- `strict: true` = **field top-level pada definisi tool**, sebelah `name` / `description` /
-  `input_schema`. **Bukan** di `tool_choice`.
-- Skema wajib `additionalProperties: false` + `required`.
-- Jaminan: `tool_use.input` lolos validasi persis.
-- Go: `Strict: anthropic.Bool(true)` + `additionalProperties` lewat `InputSchema.ExtraFields`.
-  Java: `.strict(true)` + `.putAdditionalProperty("additionalProperties", JsonValue.from(false))`.
-- **Tak kompatibel** dengan programmatic tool calling, `disable_parallel_tool_use`, `tool_choice`
-  yang dipaksa, dan tool MCP.
+- `strict: true` is a **top-level field on the tool definition**, next to `name` / `description` /
+  `input_schema`. **Not** on `tool_choice`.
+- The schema requires `additionalProperties: false` plus `required`.
+- Guarantee: `tool_use.input` validates exactly.
+- Go: `Strict: anthropic.Bool(true)` plus `additionalProperties` via `InputSchema.ExtraFields`.
+  Java: `.strict(true)` plus `.putAdditionalProperty("additionalProperties", JsonValue.from(false))`.
+- **Not compatible** with programmatic tool calling, `disable_parallel_tool_use`, a forced `tool_choice`,
+  or MCP tools.
 
 ### Structured outputs
 
-- `output_config: {format: {...}}` pada `messages.create()`. `output_format` yang lama **usang**.
-- Jalur yang dianjurkan: `client.messages.parse()` — validasi otomatis terhadap skema.
-- **Tak kompatibel dengan citations** (`citations: {enabled: true}` pada blok dokumen) → 400.
+- `output_config: {format: {...}}` on `messages.create()`. The older `output_format` is **deprecated**.
+- Recommended path: `client.messages.parse()` — automatic validation against the schema.
+- **Not compatible with citations** (`citations: {enabled: true}` on a document block) → 400.
 
-### Tool search untuk katalog besar
+### Tool search for large catalogues
 
-- Deklarasikan `tool_search_tool_regex_20251119` **atau** `tool_search_tool_bm25_20251119`.
-- Tandai tool lain `defer_loading: true`.
-- **Jangan defer semuanya**: tool pencari tak boleh `defer_loading`, dan minimal satu tool harus
-  non-deferred → kalau tidak, `400 All tools have defer_loading set`.
+- Declare `tool_search_tool_regex_20251119` **or** `tool_search_tool_bm25_20251119`.
+- Mark the other tools `defer_loading: true`.
+- **Never defer everything**: the search tool must not carry `defer_loading`, and at least one tool must be
+  non-deferred — otherwise `400 All tools have defer_loading set`.
 
-### Paralel & kegagalan
+### Parallelism and failures
 
-- Satu pesan asisten boleh berisi banyak blok `tool_use`; jalankan bersamaan, lalu kembalikan
-  **semua** `tool_result` dalam **satu** pesan user. Memecahnya melatih model berhenti paralel.
-- Tool gagal → `tool_result` dengan `is_error: true`. Jangan dibuang.
+- One assistant message may contain many `tool_use` blocks; run them concurrently, then return **all**
+  `tool_result` blocks in **one** user message. Splitting them trains the model to stop going parallel.
+- A failed tool → `tool_result` with `is_error: true`. Never drop it.
 
 ### Truncation
 
-Jangan pelit `max_tokens`: kena batas = keluaran terpotong di tengah dan harus diulang. Default sehat:
-±16.000 untuk non-streaming, ±64.000 untuk streaming. Untuk `max_tokens` sangat besar (hingga 128K pada
-model kini) SDK **mewajibkan streaming** agar tak kena timeout HTTP.
+Do not lowball `max_tokens`: hitting the cap truncates the output mid-thought and forces a retry. Healthy
+defaults: ~16,000 for non-streaming, ~64,000 for streaming. For very large `max_tokens` (up to 128K on
+current models) the SDKs **require streaming** to avoid HTTP timeouts.
 
 ---
 
-## API OpenAI-compatible (9router → Sonnet gratis, LM lain)
+## OpenAI-compatible APIs (9router → free Sonnet, other LMs)
 
-Sumber: dokumentasi Structured Outputs OpenAI.
+Source: the OpenAI Structured Outputs documentation.
 
-**Syarat mode strict**
-- `"additionalProperties": false` wajib.
-- **Semua properti harus `required`.**
-- Field opsional dibuat lewat tipe nullable — `"type": ["string", "null"]` — bukan dengan
-  menghapusnya dari `required`.
+**Strict-mode requirements**
+- `"additionalProperties": false` is mandatory.
+- **Every property must be `required`.**
+- Optional fields are expressed through a nullable type — `"type": ["string", "null"]` — not by removing
+  them from `required`.
 
-**Didukung:** string · number · boolean · array · object · `enum` · `$ref` rekursif · objek/larik bersarang.
+**Supported:** string · number · boolean · array · object · `enum` · recursive `$ref` · nested objects and arrays.
 
-**Kondisi tepi yang harus dideteksi program (bukan exception):**
-| Kondisi | Tanda |
+**Edge conditions your code must detect (they are not exceptions):**
+| Condition | Marker |
 |---|---|
-| Terpotong | `status: "incomplete"` + `incomplete_details.reason: "max_output_tokens"` |
-| Penolakan keamanan | blok konten `type: "refusal"` terpisah |
-| Diblokir filter | `incomplete_details.reason: "content_filter"` |
+| Truncated | `status: "incomplete"` + `incomplete_details.reason: "max_output_tokens"` |
+| Safety refusal | a separate content block of `type: "refusal"` |
+| Filter-blocked | `incomplete_details.reason: "content_filter"` |
 
-Ketiganya **tidak** menghasilkan JSON yang sesuai skema. Cek dulu sebelum mem-parse.
+None of the three yields schema-conforming JSON. Check for them before parsing.
 
-**Catatan 9router:** history yang membawa `reasoning_content` dari penyedia lama ditolak `HTTP 400` oleh
-penyedia yang lebih ketat. Itu wilayah `llm-quota-routing`, bukan skema — jangan salah diagnosis sebagai
-masalah structured output.
+**9router note:** history carrying `reasoning_content` from a previous provider is rejected with `HTTP 400`
+by stricter providers. That is `llm-quota-routing` territory, not a schema problem — do not misdiagnose it
+as a structured-output issue.

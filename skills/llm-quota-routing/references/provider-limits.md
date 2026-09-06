@@ -1,69 +1,71 @@
-# Batas free-tier & jam reset (dicek 10 Jul 2026)
+# Free-tier limits and reset hours (checked 10 Jul 2026)
 
-Semua jam reset dikonversi ke **WIB (UTC+7)** — zona mesin tempat pengukuran dilakukan. Sesuaikan.
-Angka bisa berubah — selalu verifikasi ke dokumentasi resmi sebelum dipakai jadi keputusan keras.
+All reset hours are converted to **WIB (UTC+7)** — the time zone of the machine where these measurements
+were taken. Adjust for yours. These numbers change: always verify against the official documentation
+before turning one into a hard decision.
 
-## Jam reset (yang menentukan jadwal cron)
+## Reset hours (what actually dictates your cron schedule)
 
-| Provider | Reset harian | = WIB | Catatan |
+| Provider | Daily reset | = WIB | Notes |
 |---|---|---|---|
-| OpenRouter (`:free`) | midnight UTC | **07:00** | dihitung per "current UTC day" |
-| Gemini (free tier) | midnight Pacific | **14:00** (PDT) / 15:00 (PST) | RPD reset tengah malam PT |
-| Groq (free) | rolling window | — | batas per menit/hari, bukan reset serentak |
-| Antigravity via 9router | kuota individu, reset ~83 jam | — | pesan error menyebut sisa waktu persis |
+| OpenRouter (`:free`) | midnight UTC | **07:00** | counted per "current UTC day" |
+| Gemini (free tier) | midnight Pacific | **14:00** (PDT) / 15:00 (PST) | RPD resets at midnight PT |
+| Groq (free) | rolling window | — | per-minute/per-day limits, not a synchronized reset |
+| Antigravity via 9router | individual quota, resets ~83 h | — | the error message states the exact time remaining |
 
-**Konsekuensi:** jam 20:00–07:00 WIB adalah zona mati kalau armada hanya berisi OpenRouter + Gemini.
-Jendela paling subur: **07:00–09:00** (OpenRouter segar) dan **14:00–17:00** (Gemini segar).
+**Consequence:** 20:00–07:00 WIB is a dead zone if the fleet contains only OpenRouter and Gemini.
+The most fertile windows: **07:00–09:00** (OpenRouter fresh) and **14:00–17:00** (Gemini fresh).
 
-## Batas per model
+## Per-model limits
 
-### Gemini (free tier, per project — bukan per API key)
+### Gemini (free tier, per project — not per API key)
 | Model | RPM | TPM | RPD |
 |---|---|---|---|
-| gemini-2.5-flash | 10 | 250.000 | 250 |
-| gemini-2.5-flash-lite | 15 | 250.000 | 1.000 |
+| gemini-2.5-flash | 10 | 250,000 | 250 |
+| gemini-2.5-flash-lite | 15 | 250,000 | 1,000 |
 
-RPM 10 gampang kena oleh loop agentic yang menembak beruntun. Error: `429 RESOURCE_EXHAUSTED`,
+An RPM of 10 is easy to breach with an agentic loop firing in bursts. Error: `429 RESOURCE_EXHAUSTED`,
 `generate_content_free_tier_requests`.
 
 ### OpenRouter (`:free` variants)
-- **20 request/menit** untuk semua model `:free`.
-- **50 request/hari** kalau belum pernah beli kredit; **1.000/hari** kalau pernah beli ≥ $10.
-- Model berbeda punya batas upstream berbeda → menyebar beban antar model itu sah.
-- Rate-limit upstream muncul sebagai `429 "Provider returned error"` dengan `metadata.raw` berisi
+- **20 requests/minute** across all `:free` models.
+- **50 requests/day** if you have never bought credit; **1,000/day** once you have bought ≥ $10.
+- Different models have different upstream limits → spreading load across models is legitimate.
+- Upstream rate limits surface as `429 "Provider returned error"` with `metadata.raw` containing
   "temporarily rate-limited upstream".
 
-> **50/hari itu kecil.** Satu run agentic bisa menghabiskan 15–30 panggilan. Artinya 2 run/hari, lalu kering.
+> **50/day is small.** A single agentic run can consume 15–30 calls. That means 2 runs/day, then dry.
 
 ### Groq (free)
-- Batas per-model (llama-3.3-70b-versatile ≠ llama-3.1-8b-instant). Satu kering, yang lain bisa hidup.
-- 8b-instant: RPD besar, tapi **TPM kecil** → prompt agentic besar bisa ditolak walau kuota harian penuh.
-  Bagus sebagai bantalan panggilan kecil, buruk sebagai penyaji run penuh.
-- **Menolak `reasoning_content` pada pesan assistant** → 400 permanen di percakapan multi-giliran yang
-  pernah dilayani model thinking. Lihat SKILL.md.
+- Limits are per model (llama-3.3-70b-versatile ≠ llama-3.1-8b-instant). One being dry does not mean the
+  other is.
+- 8b-instant: large RPD but **small TPM** → a large agentic prompt can be rejected while the daily quota is
+  untouched. Good as a cushion for small calls, bad as the server of a full run.
+- **Rejects `reasoning_content` on assistant messages** → a permanent 400 in any multi-turn conversation
+  that a reasoning model has previously served. See SKILL.md.
 
-## Model yang terbukti mati di setup ini (jangan dipasang lagi)
+## Models proven dead in this setup (do not re-add)
 
-| Model | Gejala | Tanggal uji |
+| Model | Symptom | Test date |
 |---|---|---|
-| `gemini/gemini-2.0-flash-lite` | 429 quota-0 sejak permintaan pertama | 3 Jul 2026 |
-| `gemini/gemma-3-27b-it` | 404 lewat 9router | 3 Jul 2026 |
-| `gemini/gemini-2.0-flash` | 429 | sebelum 3 Jul 2026 |
-| `groq/llama-3.3-70b-versatile` | 400 `reasoning_content` unsupported (bukan kuota) | 10 Jul 2026 |
-| `groq/llama-3.1-8b-instant` | idem | 10 Jul 2026 |
+| `gemini/gemini-2.0-flash-lite` | 429 quota-0 from the very first request | 3 Jul 2026 |
+| `gemini/gemma-3-27b-it` | 404 through 9router | 3 Jul 2026 |
+| `gemini/gemini-2.0-flash` | 429 | before 3 Jul 2026 |
+| `groq/llama-3.3-70b-versatile` | 400 `reasoning_content` unsupported (not quota) | 10 Jul 2026 |
+| `groq/llama-3.1-8b-instant` | same | 10 Jul 2026 |
 
-## Model yang hidup tapi TIDAK layak menulis
+## Models that are alive but NOT fit to write
 
-| Model | Masalah |
+| Model | Problem |
 |---|---|
-| `openrouter/nvidia/nemotron-3-super-120b-a12b:free` | tersedia luas, tapi output bahasa Indonesia tercemar kata Italia/Jerman/Vietnam, mengarang statistik, menimpa file utuh alih-alih edit sebagian |
-| `openrouter/qwen/qwen3-coder:free` | model kode; prosa buruk + sering 429 upstream |
+| `openrouter/nvidia/nemotron-3-super-120b-a12b:free` | widely available, but its Indonesian output is contaminated with Italian/German/Vietnamese words, it invents statistics, and it overwrites whole files instead of editing part of one |
+| `openrouter/qwen/qwen3-coder:free` | a code model; poor prose plus frequent upstream 429s |
 
-Keduanya boleh jadi tier untuk kerja **baca/analisis**, tidak untuk kerja **tulis-persisten**.
+Both are acceptable tiers for **read/analysis** work, never for **persistent-write** work.
 
-## Sumber
+## Sources
 
 - https://ai.google.dev/gemini-api/docs/rate-limits
 - https://openrouter.ai/docs/api-reference/limits
 - https://console.groq.com/docs/errors
-- Pengukuran langsung: `~/.9router/db/data.sqlite` (tabel `requestDetails`), 9–10 Jul 2026.
+- Direct measurement: `~/.9router/db/data.sqlite` (table `requestDetails`), 9–10 Jul 2026.

@@ -1,105 +1,106 @@
 #!/usr/bin/env bash
-# audit-job.sh — memvonis job tak-berpenunggu dari BUKTI, bukan dari statusnya sendiri.
+# audit-job.sh — pass verdict on an unattended job from EVIDENCE, not from its own status.
 #
-# KONTRAK KELUARAN (jangan diubah — ini yang bikin alat ini aman dipakai di cron):
-#   stdout berisi  = ADA TEMUAN (run kosong / tak ada bukti)
-#   stdout kosong  = tak ada temuan (job terbukti bekerja)
-#   exit 0         = alat berhasil menilai — TERMASUK saat ada temuan
-#   exit 2         = ALAT INI SENDIRI RUSAK (argumen salah, lintasan tak ada, date tak valid)
-# Menumpuk "ada temuan" ke exit code melahirkan lingkaran umpan balik: penjadwal menandai job
-# `error`, audit besok membaca kegagalan itu sebagai temuan tambahan, merah selamanya.
+# OUTPUT CONTRACT (do not change — this is what makes the tool safe to run from cron):
+#   stdout has content = FINDINGS EXIST (empty run / no evidence)
+#   stdout empty       = no findings (the job is proven to have worked)
+#   exit 0             = the tool judged successfully — INCLUDING when there are findings
+#   exit 2             = THE TOOL ITSELF IS BROKEN (bad arguments, missing paths, invalid date)
+# Stacking "findings exist" onto the exit code creates a feedback loop: the scheduler marks the job
+# `error`, tomorrow's audit reads that failure as an additional finding, red forever.
 #
-# Pakai:
-#   audit-job.sh NAMA --bukti 'GLOB|DIR' [--bukti ...] --sejak 'SPEC' [--minimal N] [--verbose]
+# Usage:
+#   audit-job.sh NAME --evidence 'GLOB|DIR' [--evidence ...] --since 'SPEC' [--min N] [--verbose]
 #
-#   --bukti    berkas/glob/direktori yang ISINYA seharusnya bertambah. Boleh diulang.
-#              Glob WAJIB dikutip supaya tak diekspansi shell lebih dulu.
-#   --sejak    apa pun yang dimengerti `date -d`: '6 hours ago', 'today 15:00', ISO 8601.
-#              Isi dengan waktu MULAI run yang sedang dinilai.
-#   --minimal  berapa artefak baru minimal supaya disebut bekerja (default 1).
-#   --verbose  cetak vonis walau tak ada temuan (untuk dijalankan manual).
+#   --evidence  file/glob/directory whose CONTENT should be growing. May be repeated.
+#               Globs MUST be quoted so the shell does not expand them first.
+#   --since     anything `date -d` understands: '6 hours ago', 'today 15:00', ISO 8601.
+#               Set it to the START time of the run being judged.
+#   --min       how many new artifacts are required to count as working (default 1).
+#   --verbose   print the verdict even when there are no findings (for manual runs).
 #
-# Contoh:
-#   audit-job.sh mentor-reflection --bukti '~/.hermes/knowledge/*.md' --sejak '2026-08-31 15:00'
+# Example:
+#   audit-job.sh mentor-reflection --evidence '~/.hermes/knowledge/*.md' --since '2026-08-31 15:00'
 set -uo pipefail
 
-nama=""; sejak=""; minimal=1; verbose=0; bukti=()
+name=""; since=""; min=1; verbose=0; evidence=()
 
-rusak() { printf 'ALAT RUSAK (%s): %s\n' "${nama:-audit-job}" "$1" >&2; exit 2; }
+broken() { printf 'TOOL BROKEN (%s): %s\n' "${name:-audit-job}" "$1" >&2; exit 2; }
 
-[ $# -ge 1 ] || rusak "tak ada argumen. Pakai: audit-job.sh NAMA --bukti GLOB --sejak SPEC"
-nama="$1"; shift
-case "$nama" in -*) rusak "argumen pertama harus NAMA job, bukan opsi '$nama'";; esac
+[ $# -ge 1 ] || broken "no arguments. Usage: audit-job.sh NAME --evidence GLOB --since SPEC"
+name="$1"; shift
+case "$name" in -*) broken "the first argument must be the job NAME, not the option '$name'";; esac
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --bukti)   [ $# -ge 2 ] || rusak "--bukti butuh nilai"; bukti+=("$2"); shift 2 ;;
-    --sejak)   [ $# -ge 2 ] || rusak "--sejak butuh nilai"; sejak="$2";    shift 2 ;;
-    --minimal) [ $# -ge 2 ] || rusak "--minimal butuh nilai"; minimal="$2"; shift 2 ;;
-    --verbose) verbose=1; shift ;;
-    *) rusak "opsi tak dikenal: $1" ;;
+    --evidence) [ $# -ge 2 ] || broken "--evidence needs a value"; evidence+=("$2"); shift 2 ;;
+    --since)    [ $# -ge 2 ] || broken "--since needs a value";    since="$2";       shift 2 ;;
+    --min)      [ $# -ge 2 ] || broken "--min needs a value";      min="$2";         shift 2 ;;
+    --verbose)  verbose=1; shift ;;
+    *) broken "unknown option: $1" ;;
   esac
 done
 
-[ "${#bukti[@]}" -gt 0 ] || rusak "wajib ada minimal satu --bukti (job tanpa kontrak keluaran tak bisa dinilai)"
-[ -n "$sejak" ]          || rusak "wajib ada --sejak (waktu mulai run yang dinilai)"
-case "$minimal" in ''|*[!0-9]*) rusak "--minimal harus bilangan bulat, dapat '$minimal'";; esac
+[ "${#evidence[@]}" -gt 0 ] || broken "at least one --evidence is required (a job with no output contract cannot be judged)"
+[ -n "$since" ]             || broken "--since is required (the start time of the run being judged)"
+case "$min" in ''|*[!0-9]*) broken "--min must be an integer, got '$min'";; esac
 
-ambang=$(date -d "$sejak" '+%Y-%m-%d %H:%M:%S' 2>/dev/null) || rusak "--sejak tak dimengerti date: '$sejak'"
+threshold=$(date -d "$since" '+%Y-%m-%d %H:%M:%S' 2>/dev/null) || broken "--since not understood by date: '$since'"
 
-baru=0; total=0; terbaru=""; tak_ada=()
+fresh=0; total=0; newest=""; missing=()
 
-for pola in "${bukti[@]}"; do
-  # ~ tidak diekspansi di dalam string berkutip — lakukan manual.
-  case "$pola" in "~"/*) pola="$HOME${pola#\~}";; esac
+for pattern in "${evidence[@]}"; do
+  # ~ is not expanded inside a quoted string — do it by hand.
+  case "$pattern" in "~"/*) pattern="$HOME${pattern#\~}";; esac
 
-  if [ -d "$pola" ]; then
-    akar="$pola"; saring=(-type f)
-  elif [ -e "$pola" ]; then
-    akar=$(dirname -- "$pola"); saring=(-type f -path "$pola")
+  if [ -d "$pattern" ]; then
+    root="$pattern"; filter=(-type f)
+  elif [ -e "$pattern" ]; then
+    root=$(dirname -- "$pattern"); filter=(-type f -path "$pattern")
   else
-    case "$pola" in
-      *[*?[]*) # ada wildcard: akar = awalan direktori terpanjang yang benar-benar ada
-        akar="${pola%%/\**}"; [ "$akar" = "$pola" ] && akar=$(dirname -- "$pola")
-        while [ -n "$akar" ] && [ ! -d "$akar" ]; do
-          induk=$(dirname -- "$akar"); [ "$induk" = "$akar" ] && break; akar="$induk"
+    case "$pattern" in
+      *[*?[]*) # wildcard present: root = longest directory prefix that actually exists
+        root="${pattern%%/\**}"; [ "$root" = "$pattern" ] && root=$(dirname -- "$pattern")
+        while [ -n "$root" ] && [ ! -d "$root" ]; do
+          parent=$(dirname -- "$root"); [ "$parent" = "$root" ] && break; root="$parent"
         done
-        saring=(-type f -path "$pola") ;;
-      *) # lintasan biasa yang memang tak ada — jangan naik ke induknya
-        tak_ada+=("$pola"); continue ;;
+        filter=(-type f -path "$pattern") ;;
+      *) # a plain path that genuinely does not exist — do not walk up to its parent
+        missing+=("$pattern"); continue ;;
     esac
   fi
 
-  if [ ! -d "$akar" ]; then tak_ada+=("$pola"); continue; fi
+  if [ ! -d "$root" ]; then missing+=("$pattern"); continue; fi
 
-  # find bisa exit != 0 cuma karena "Permission denied" pada cabang lain; itu bukan alat rusak.
-  daftar=$(find "$akar" "${saring[@]}" -printf '%T@ %TY-%Tm-%Td %TH:%TM %p\n' 2>/dev/null)
-  if [ -n "$daftar" ]; then t=$(printf '%s\n' "$daftar" | wc -l); else t=0; fi
-  n=$(find "$akar" "${saring[@]}" -newermt "$ambang" -printf 'x\n' 2>/dev/null | wc -l)
-  baru=$((baru + n)); total=$((total + t))
+  # find can exit != 0 merely because of "Permission denied" on an unrelated branch; that is not a broken tool.
+  listing=$(find "$root" "${filter[@]}" -printf '%T@ %TY-%Tm-%Td %TH:%TM %p\n' 2>/dev/null)
+  if [ -n "$listing" ]; then t=$(printf '%s\n' "$listing" | wc -l); else t=0; fi
+  n=$(find "$root" "${filter[@]}" -newermt "$threshold" -printf 'x\n' 2>/dev/null | wc -l)
+  fresh=$((fresh + n)); total=$((total + t))
 
-  m=$(printf '%s\n' "$daftar" | sort -rn | head -1)
+  m=$(printf '%s\n' "$listing" | sort -rn | head -1)
   if [ -n "$m" ]; then
-    if [ -z "$terbaru" ] || [ "${m%% *}" \> "${terbaru%% *}" ]; then terbaru="$m"; fi
+    if [ -z "$newest" ] || [ "${m%% *}" \> "${newest%% *}" ]; then newest="$m"; fi
   fi
 done
 
-[ "${#tak_ada[@]}" -eq "${#bukti[@]}" ] && rusak "tak satu pun lintasan bukti ada: ${tak_ada[*]}"
+[ "${#missing[@]}" -eq "${#evidence[@]}" ] && broken "not one evidence path exists: ${missing[*]}"
 
-jejak="${terbaru#* }"
-[ -n "$jejak" ] || jejak="(tak ada berkas sama sekali di lintasan bukti)"
+trace="${newest#* }"
+[ -n "$trace" ] || trace="(no files at all under the evidence paths)"
 
-if [ "$baru" -ge "$minimal" ]; then
-  [ "$verbose" -eq 1 ] && printf '%s: BEKERJA — %s artefak baru sejak %s (terbaru: %s)\n' \
-    "$nama" "$baru" "$ambang" "$jejak"
+if [ "$fresh" -ge "$min" ]; then
+  noun="artifacts"; [ "$fresh" -eq 1 ] && noun="artifact"
+  [ "$verbose" -eq 1 ] && printf '%s: WORKING — %s new %s since %s (newest: %s)\n' \
+    "$name" "$fresh" "$noun" "$threshold" "$trace"
   exit 0
 fi
 
 if [ "$total" -eq 0 ]; then
-  printf '%s: TAK ADA BUKTI — lintasan bukti kosong sama sekali. Job ini belum pernah menghasilkan apa pun.\n' "$nama"
+  printf '%s: NO EVIDENCE — the evidence paths are completely empty. This job has never produced anything.\n' "$name"
 else
-  printf '%s: RUN KOSONG — 0 artefak baru sejak %s (butuh %s). Artefak terbaru: %s\n' \
-    "$nama" "$ambang" "$minimal" "$jejak"
+  printf '%s: EMPTY RUN — 0 new artifacts since %s (needed %s). Newest artifact: %s\n' \
+    "$name" "$threshold" "$min" "$trace"
 fi
-[ "${#tak_ada[@]}" -gt 0 ] && printf '%s: catatan — lintasan bukti tak ada: %s\n' "$nama" "${tak_ada[*]}"
+[ "${#missing[@]}" -gt 0 ] && printf '%s: note — evidence path does not exist: %s\n' "$name" "${missing[*]}"
 exit 0

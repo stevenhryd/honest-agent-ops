@@ -1,36 +1,36 @@
 #!/usr/bin/env bash
-# router-health.sh — potret kesehatan armada model 9router.
-# Pakai: ./router-health.sh [hari-ke-belakang]   (default 2)
-# Tidak mengubah apa pun. Tidak mencetak kredensial.
+# router-health.sh — health snapshot of a 9router model fleet.
+# Usage: ./router-health.sh [days-back]   (default 2)
+# Changes nothing. Prints no credentials.
 #
-# KONTRAK KELUARAN (sama dengan scripts/audit-job.sh di skill honest-automation):
-#   stdout = laporan   ·   exit 0 = alat berhasil menilai   ·   exit 2 = ALAT INI SENDIRI RUSAK
-# Model mati BUKAN kegagalan alat — itu temuan, dan temuan dilaporkan lewat stdout. Menumpuknya
-# ke exit code membuat penjadwal menandai job `error`, lalu audit berikutnya membaca kegagalan itu
-# sebagai bolong tambahan: merah selamanya.
+# OUTPUT CONTRACT (identical to scripts/audit-job.sh in the honest-automation skill):
+#   stdout = the report   ·   exit 0 = the tool judged successfully   ·   exit 2 = THE TOOL ITSELF IS BROKEN
+# A dead model is NOT a tool failure — it is a finding, and findings are reported on stdout. Stacking them
+# onto the exit code makes the scheduler mark the job `error`, and the next audit then reads that failure
+# as an additional gap: red forever.
 set -uo pipefail
 
-rusak() { printf 'ALAT RUSAK (router-health): %s\n' "$1" >&2; exit 2; }
-command -v sqlite3 >/dev/null 2>&1 || rusak "sqlite3 tak terpasang"
-command -v python3 >/dev/null 2>&1 || rusak "python3 tak terpasang"
+broken() { printf 'TOOL BROKEN (router-health): %s\n' "$1" >&2; exit 2; }
+command -v sqlite3 >/dev/null 2>&1 || broken "sqlite3 is not installed"
+command -v python3 >/dev/null 2>&1 || broken "python3 is not installed"
 
 DAYS="${1:-2}"
 DB="${NINEROUTER_DB:-$HOME/.9router/db/data.sqlite}"
 
-[ -r "$DB" ] || rusak "DB router tidak terbaca: $DB (setel NINEROUTER_DB kalau letaknya lain)"
+[ -r "$DB" ] || broken "router database not readable: $DB (set NINEROUTER_DB if it lives elsewhere)"
 
-echo "== Tally per-model per-status ($DAYS hari terakhir) =="
+echo "== Tally per model per status (last $DAYS days) =="
 sqlite3 -header -column "$DB" "
-SELECT substr(timestamp,1,10) AS tgl, model, status, COUNT(*) AS n
+SELECT substr(timestamp,1,10) AS day, model, status, COUNT(*) AS n
 FROM requestDetails
 WHERE timestamp >= date('now','-${DAYS} days')
-GROUP BY tgl, model, status
-ORDER BY tgl, n DESC;"
+GROUP BY day, model, status
+ORDER BY day, n DESC;"
 
 echo
-echo "== Vonis per model =="
-# Vonis butuh KODE error asli, bukan sekadar rasio: ok=0 bisa berarti kuota kering (429)
-# atau cacat permanen (400/404). Dua-duanya "mati", obatnya beda jauh.
+echo "== Verdict per model =="
+# The verdict needs the REAL error code, not just a ratio: ok=0 can mean a dry quota (429) or a
+# permanent defect (400/404). Both read as "dead", but the cures are entirely different.
 python3 - "$DB" "$DAYS" <<'EOF'
 import sqlite3, json, sys, re
 db, days = sqlite3.connect(sys.argv[1]), int(sys.argv[2])
@@ -39,14 +39,14 @@ rows = db.execute(
     "WHERE timestamp >= date('now', ?) GROUP BY model", (f'-{days} days',)).fetchall()
 
 def last_code(model):
-    """Kode HTTP asli dari upstream. JSON-nya bersarang & ter-escape, jadi cari di teks mentah."""
+    """The real upstream HTTP code. The JSON is nested and escaped, so search the raw text too."""
     r = db.execute("SELECT data FROM requestDetails WHERE model=? AND status='error' "
                    "ORDER BY timestamp DESC LIMIT 1", (model,)).fetchone()
     if not r:
         return None
     try:
         d = json.loads(r[0])
-        # providerResponse sering {} kosong -> error aslinya ada di response
+        # providerResponse is often an empty {} -> the real error sits in response
         pr = d.get('providerResponse') or d.get('response') or {}
     except Exception:
         pr = {}
@@ -60,22 +60,22 @@ for model, ok, err in rows:
         continue
     code = last_code(model) if err else None
     if ok == 0 and code == 429:
-        v = "KERING      -> kuota habis; jadwalkan ke jendela reset, turunkan cadence"
+        v = "DRY          -> quota exhausted; schedule into the reset window, lower the cadence"
     elif ok == 0 and code in (400, 404):
-        v = f"CACAT ({code}) -> permanen (schema/model tak dikenal); CABUT dari chain"
+        v = f"DEFECT ({code}) -> permanent (schema/unknown model); REMOVE from the chain"
     elif ok == 0:
-        v = "MATI TOTAL  -> baca error mentah di bawah sebelum memutuskan"
+        v = "FULLY DEAD   -> read the raw error below before deciding"
     elif err == 0:
-        v = "SEHAT       -> cek MUTU output; status hijau tidak menjamin tulisan bagus"
+        v = "HEALTHY      -> check output QUALITY; a green status does not guarantee good writing"
     elif err * 100 // (ok + err) > 60:
-        v = "TERSENDAT   -> rate limit; perbaiki jadwal + backoff berjitter"
+        v = "STRUGGLING   -> rate limited; fix the schedule and add jittered backoff"
     else:
-        v = "WAJAR"
+        v = "NORMAL"
     print(f"  {model:<46} ok={ok:<4} err={err:<4} {v}")
 EOF
 
 echo
-echo "== Error mentah upstream terakhir per model =="
+echo "== Last raw upstream error per model =="
 python3 - "$DB" <<'EOF'
 import sqlite3, json, sys
 db = sqlite3.connect(sys.argv[1])
@@ -95,7 +95,7 @@ for (m,) in rows:
     print(f"  {m}\n    {err}\n")
 EOF
 
-echo "== Ingat =="
-echo "  - Error yang dilaporkan agen = error TIER TERAKHIR, bukan sebab utama."
-echo "  - 400 invalid_request = permanen (cabut tier). 429 = kuota (jadwal ulang). 502 = retry berjitter."
-echo "  - Model hidup tapi lemah tetap berbahaya untuk kerja tulis-persisten."
+echo "== Remember =="
+echo "  - The error an agent reports is the LAST TIER's error, not the root cause."
+echo "  - 400 invalid_request = permanent (remove the tier). 429 = quota (reschedule). 502 = jittered retry."
+echo "  - A model that is alive but weak is still dangerous for persistent-write work."

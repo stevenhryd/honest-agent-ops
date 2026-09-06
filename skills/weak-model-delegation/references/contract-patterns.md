@@ -1,125 +1,125 @@
-# Cetakan kontrak delegasi
+# Delegation contract templates
 
-Urutan yang benar: **tulis kriteria terima → tulis prompt → kirim → vonis**. Kalau langkah pertama
-tak bisa diselesaikan, tugasnya bukan kandidat delegasi.
-
----
-
-## Kerangka umum
-
-```
-KONTRAK DELEGASI
-  artefak      : satu berkas / satu objek JSON  (JANGAN dua)
-  bentuk       : <skema JSON | GBNF | bingkai sentinel>
-  kriteria     : <perintah yang memvonis, exit 0 = terima>
-  plafon       : 2 percobaan, strategi berbeda tiap kali
-  penerima     : aku (reviewer akhir) — hasil tak dipakai sebelum lolos kriteria
-```
+The correct order is: **write the acceptance criteria → write the prompt → send → pass verdict.** If you
+cannot complete the first step, the task is not a delegation candidate.
 
 ---
 
-## Pola 1 — Ekstraksi terstruktur (paling kuat)
+## General frame
 
-Pakai kapan pun keluarannya bisa dinyatakan sebagai objek.
+```
+DELEGATION CONTRACT
+  artifact  : one file / one JSON object  (NEVER two)
+  shape     : <JSON schema | GBNF | sentinel frame>
+  criteria  : <the command that judges it, exit 0 = accept>
+  ceiling   : 2 attempts, a different strategy each time
+  recipient : me (final reviewer) — the result is not used before it passes the criteria
+```
+
+---
+
+## Pattern 1 — Structured extraction (the strongest)
+
+Use whenever the output can be expressed as an object.
 
 ```jsonc
-// skema — perhatikan tiga hal wajib untuk strict mode
+// schema — note the three things strict mode requires
 {
   "type": "object",
-  "additionalProperties": false,          // 1. tutup field liar
-  "required": ["kode", "nama", "harga"],  // 2. SEMUA properti masuk required
+  "additionalProperties": false,          // 1. close off stray fields
+  "required": ["code", "name", "price"],  // 2. EVERY property goes in required
   "properties": {
-    "kode":  {"type": "string", "description": "Kode barang di ERP tujuan, mis. 'BRG-0012'"},
-    "nama":  {"type": "string"},
-    "harga": {"type": ["number", "null"]} // 3. opsional = nullable, bukan dihapus dari required
+    "code":  {"type": "string", "description": "Item code in the target ERP, e.g. 'BRG-0012'"},
+    "name":  {"type": "string"},
+    "price": {"type": ["number", "null"]} // 3. optional = nullable, not removed from required
   }
 }
 ```
 
-Aturan penyusunan skema untuk model lemah:
-- **Sekecil mungkin.** Skema besar = lebih banyak kesempatan salah. Pecah jadi dua panggilan kalau perlu.
-- **Deskripsi tiap parameter menyebut format + contoh konkret**: `"Tanggal ISO 8601, mis. '2026-03-15'"`.
-  Ini yang paling banyak menurunkan kesalahan argumen.
-- **`enum` untuk himpunan tertutup**, jangan string bebas.
-- **Nama fungsi/field mencerminkan niat**: `ambil_pesanan_v2` lebih baik dari `pesanan`. Versinya juga
-  memungkinkan uji A/B pada perubahan deskripsi tanpa merusak pemanggil lama.
+Schema-design rules for weak models:
+- **As small as possible.** A bigger schema means more chances to be wrong. Split it into two calls if needed.
+- **Every parameter description states the format plus a concrete example**: `"ISO 8601 date, e.g. '2026-03-15'"`.
+  This is the single largest reducer of argument errors.
+- **`enum` for closed sets**, never a free-form string.
+- **Function and field names should express intent**: `fetch_order_v2` beats `order`. The version also lets
+  you A/B-test description changes without breaking existing callers.
 
-Kriteria terima: `python -m json.tool` + validasi skema (`jsonschema`, `pydantic`).
-
----
-
-## Pola 2 — Isi berkas (tak bisa diskemakan)
-
-```
-Tulis isi lengkap berkas <lintasan>.
-
-Keluarkan HANYA isi berkas, di antara dua penanda di bawah.
-Tanpa pagar kode, tanpa penjelasan, tanpa kalimat pembuka atau penutup.
-
-<<<MULAI>>>
-(isi berkas di sini)
-<<<SELESAI>>>
-```
-
-Kenapa sentinel, bukan pagar kode ``` : pagar kode muncul juga **di dalam** isi (README, dokumentasi),
-jadi tak bisa dipakai sebagai batas. Sentinel dipilih yang mustahil ada di isi.
-
-Vonis mekanis:
-- `<<<MULAI>>>` tak ada → model membungkus dengan prosa → tolak.
-- `<<<SELESAI>>>` tak ada → **terpotong**, bukan selesai → tolak, dan ini deteksi truncation yang tak
-  butuh akses `finish_reason`.
-- Ada teks di luar pasangan sentinel → buang, jangan dipakai sebagai isi.
-- Dua pasang sentinel → model mengerjakan dua artefak → tolak, ulangi satu per satu.
-
-Kriteria terima menyusul sesuai jenis berkas: `node --check`, `bash -n`, `tsc --noEmit`,
-`python -m py_compile`, `psql -f … --dry-run`, atau tes yang sudah ada.
+Acceptance criteria: `python -m json.tool` plus schema validation (`jsonschema`, `pydantic`).
 
 ---
 
-## Pola 3 — Transformasi baris demi baris
-
-Untuk terjemahan, format ulang, penomoran ulang. Kontrak terkuatnya bukan skema, melainkan **invarian
-yang bisa dihitung**:
+## Pattern 2 — File contents (cannot be schema'd)
 
 ```
-- jumlah baris keluaran HARUS sama dengan masukan
-- kolom pertama tiap baris tidak boleh berubah
-- tak boleh ada baris kosong tambahan
+Write the complete contents of the file <path>.
+
+Output ONLY the file contents, between the two markers below.
+No code fences, no explanation, no opening or closing sentence.
+
+<<<BEGIN>>>
+(file contents here)
+<<<END>>>
 ```
 
-Vonis: `wc -l` dua sisi + `cut -f1 | diff`. Invarian yang bisa dihitung mengalahkan pemeriksaan mata
-untuk keluaran besar — dan justru keluaran besar itulah alasan mendelegasikan.
+Why a sentinel rather than a code fence ``` : code fences also appear **inside** the content (READMEs,
+documentation), so they cannot serve as a boundary. Pick a sentinel that cannot occur in the content.
+
+Mechanical verdict:
+- `<<<BEGIN>>>` missing → the model wrapped it in prose → reject.
+- `<<<END>>>` missing → **truncated**, not finished → reject; this is truncation detection that needs no
+  access to `finish_reason`.
+- Text outside the sentinel pair → discard it, never treat it as content.
+- Two sentinel pairs → the model produced two artifacts → reject, redo one at a time.
+
+The acceptance criteria then follow the file type: `node --check`, `bash -n`, `tsc --noEmit`,
+`python -m py_compile`, `psql -f … --dry-run`, or an existing test.
 
 ---
 
-## Pola 4 — Banyak berkas
+## Pattern 3 — Line-by-line transformation
 
-Jangan. Satu panggilan = satu artefak. Untuk N berkas, N panggilan, dengan kontrak yang sama diulang.
-Model lemah yang diminta banyak berkas akan: menggabungkan isinya, memberi judul pemisah karangan
-sendiri, atau memotong berkas terakhir tanpa memberi tahu.
+For translation, reformatting, renumbering. The strongest contract here is not a schema but a
+**countable invariant**:
 
-Kalau N besar dan tiap berkas berpola sama, kirim **cetakan + tabel nilai**, dan minta satu berkas per
-panggilan dari baris tabel yang sama — bukan minta model mengarang variasinya sendiri.
+```
+- the output line count MUST equal the input line count
+- the first column of every line must not change
+- no extra blank lines
+```
+
+Verdict: `wc -l` on both sides plus `cut -f1 | diff`. A countable invariant beats eyeballing for large
+output — and large output is exactly why you delegated.
 
 ---
 
-## Kalimat prompt sistem yang terbukti perlu
+## Pattern 4 — Many files
 
-```
-Keluarkan HANYA <artefak>. Tanpa penjelasan, tanpa pagar kode, tanpa kalimat pembuka.
-Kalau ada yang tak bisa kamu tentukan, tulis TIDAK_TAHU pada nilai itu — jangan mengarang.
-Jangan meringkas, jangan memotong. Kalau isi terlalu panjang, tetap tulis lengkap.
-```
+Don't. One call = one artifact. For N files, N calls, repeating the same contract. A weak model asked for
+many files will merge their contents, invent its own separator headings, or truncate the last file without
+saying so.
 
-Baris kedua penting: tanpa jalan keluar eksplisit, model lemah **mengisi tebakan** ketimbang mengaku
-tak tahu — dan tebakan yang berformat benar lolos semua pemeriksaan sintaks.
+If N is large and the files share a pattern, send a **template plus a table of values**, and ask for one
+file per call from one row of that table — rather than asking the model to invent the variations itself.
 
 ---
 
-## Yang menentukan tugas ini layak didelegasikan atau tidak
+## System-prompt sentences that prove necessary
 
-Satu pertanyaan: **perintah apa yang akan memvonis hasilnya?**
+```
+Output ONLY <artifact>. No explanation, no code fences, no preamble.
+If you cannot determine something, write UNKNOWN as that value — do not invent one.
+Do not summarize, do not truncate. If the content is long, still write it in full.
+```
 
-- Ada jawabannya → delegasikan.
-- Jawabannya "aku baca dulu" → kerjakan sendiri. Membaca hasil delegasi memakai token yang sama
-  mahalnya dengan mengerjakan, ditambah risiko salah yang tak kelihatan.
+The second line matters: without an explicit escape hatch, a weak model **fills in a guess** rather than
+admitting it does not know — and a well-formatted guess passes every syntax check.
+
+---
+
+## What decides whether a task may be delegated at all
+
+One question: **which command will pass verdict on the result?**
+
+- There is an answer → delegate.
+- The answer is "I'll read it first" → do it yourself. Reading a delegated result costs the same expensive
+  tokens as doing the work, plus the risk of an error you do not see.

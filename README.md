@@ -100,12 +100,12 @@ weak-model-delegation    → how do I make its answer usable without reading it?
 honest-automation        → how do I know the job that used it actually produced something?
 ```
 
-## A note on language
+## A note on style
 
-Skill **descriptions and triggers are in English**; the skill **bodies are written in Indonesian**.
-Claude reads them fine either way, and the prose is deliberately dense — it was written to be read by
-a model, not skimmed by a human. An English translation is the top item on the roadmap; if that blocks
-you, open an issue and say so, it moves up.
+The prose is deliberately dense — these files are read by a model under a token budget, so they favour a
+table over a paragraph and a mechanism over an adjective. A few trigger phrases and the wrapper-prose
+detector in `contract-check.sh` accept Indonesian as well as English, since a delegated model may answer
+in either; everything else is English.
 
 ## Sources
 

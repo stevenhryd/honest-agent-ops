@@ -1,16 +1,16 @@
-# Playbook diagnosis — perintah siap pakai
+# Diagnosis playbook — ready-to-run commands
 
-Contoh konkretnya memakai stack 9router + hermes-agent. Polanya berlaku untuk gateway LLM mana pun
-yang menyimpan log permintaan — ganti path DB dan nama tabelnya.
-**Selalu backup DB router sebelum mengubah combo.**
+The concrete examples use a 9router + hermes-agent stack. The pattern applies to any LLM gateway that
+stores request logs — substitute your database path and table names.
+**Always back up the router database before changing a combo.**
 
-## 0. Backup dulu
+## 0. Back up first
 
 ```bash
 cp ~/.9router/db/data.sqlite ~/.9router/db/data.sqlite.bak-$(date +%Y%m%d-%H%M)
 ```
 
-## 1. Tally per-model per-status (sebab utama muncul di sini)
+## 1. Tally per model per status (the root cause shows up here)
 
 ```bash
 sqlite3 -header -column ~/.9router/db/data.sqlite "
@@ -19,12 +19,12 @@ FROM requestDetails WHERE timestamp >= date('now','-2 days')
 GROUP BY d,model,status ORDER BY d, n DESC;"
 ```
 
-Baca hasilnya begini:
-- model **100% error** → tersangka kegagalan permanen (schema/404/kunci), bukan kuota.
-- model **campur sukses+error** → rate limit; obatnya jadwal & backoff.
-- model **100% sukses tapi output jelek** → masalah mutu, bukan infrastruktur.
+Read the result like this:
+- a model at **100% errors** → suspect a permanent failure (schema/404/key), not quota.
+- a model with **mixed successes and errors** → rate limiting; the cure is scheduling and backoff.
+- a model at **100% success but with poor output** → a quality problem, not an infrastructure one.
 
-## 2. Error mentah upstream (jangan percaya kode HTTP terluar)
+## 2. Raw upstream error (never trust the outermost HTTP code)
 
 ```bash
 python3 - <<'EOF'
@@ -40,51 +40,52 @@ for (m,) in db.execute("SELECT DISTINCT model FROM requestDetails WHERE status='
 EOF
 ```
 
-Field pentingnya `providerResponse.error` — di situ kode aslinya (400 vs 429) terbaca.
+The field that matters is `providerResponse.error` — that is where the real code (400 vs 429) is readable.
 
-## 3. Peta jam sukses → jadwal cron
+## 3. Map of successful hours → cron schedule
 
 ```bash
 cd ~/.hermes/cron/output/<job-id>
 for f in *.md; do head -1 "$f" | grep -q FAILED || echo "${f:11:2}:00"; done | sort | uniq -c
 ```
 
-Jam dengan sukses terbanyak = jendela reset kuota. Jadwalkan run di situ, bukan merata sepanjang hari.
+The hour with the most successes is the quota reset window. Schedule runs there, not spread evenly
+across the day.
 
-## 4. Ekonomi run (apakah cadence terlalu rapat?)
+## 4. Run economics (is the cadence too tight?)
 
 ```bash
 cd ~/.hermes/cron/output/<job-id>
 tot=$(ls *.md | wc -l); fail=$(grep -l FAILED *.md 2>/dev/null | wc -l)
-echo "total=$tot gagal=$fail  → panggilan terbuang ≈ $((fail * TIER * RETRY))"
+echo "total=$tot failed=$fail  → wasted calls ≈ $((fail * TIERS * RETRIES))"
 ```
 
-Kalau > 80% gagal: kuota harian habis di jam-jam awal, sisanya cuma bising. Turunkan cadence ke
-`sukses/hari + 1-2 percobaan`, semuanya di dalam jendela reset.
+If more than 80% fail: the daily quota is spent in the first hours and the rest is just noise. Lower the
+cadence to `successes/day + 1–2 attempts`, all inside the reset window.
 
-## 5. Uji mutu artefak (langkah yang paling sering dilewat)
+## 5. Artifact quality test (the step most often skipped)
 
 ```bash
-# bahasa asing nyelip di catatan berbahasa Indonesia
+# stray foreign words in notes that should be in one language
 grep -rEn "spiegazione|Werkspace|khách|decyzion|„|“" ~/.hermes/knowledge/*.md
-# paragraf dobel
+# duplicated paragraphs
 python3 - <<'EOF'
 import glob,collections,os
 for f in glob.glob(os.path.expanduser('~/.hermes/knowledge/*.md')):
     paras=[p.strip() for p in open(f).read().split('\n\n') if len(p.strip())>200]
     for p,c in collections.Counter(paras).items():
-        if c>1: print(f, "PARAGRAF DOBEL:", p[:70])
+        if c>1: print(f, "DUPLICATE PARAGRAPH:", p[:70])
 EOF
-# slug kembar (kandidat merge)
+# near-duplicate slugs (merge candidates)
 ls ~/.hermes/knowledge/*.md | sed 's#.*/##;s/\.md$//' | sort | awk '{
-  n=$0; gsub(/-(in|of|for|the|a)-/,"-",n); if (n==prev) print "MIRIP:", prev, "<->", $0; prev=n }'
+  n=$0; gsub(/-(in|of|for|the|a)-/,"-",n); if (n==prev) print "SIMILAR:", prev, "<->", $0; prev=n }'
 ```
 
-## 6. Ubah combo 9router (lewat API, bukan edit SQLite langsung)
+## 6. Change a 9router combo (through the API, not by editing SQLite directly)
 
 ```bash
 node -e '
-// path modul global ikut prefix npm: `npm root -g` untuk menemukannya.
+// the global module path follows the npm prefix: use `npm root -g` to find it.
 const api=require(process.env.NINEROUTER_CLIENT
   || require("child_process").execSync("npm root -g").toString().trim()
      + "/9router/src/cli/api/client.js");
@@ -97,22 +98,23 @@ const api=require(process.env.NINEROUTER_CLIENT
 })();'
 ```
 
-`getCombos()` mengembalikan `{success, data:{combos:[{id,name,models[]}]}}`.
+`getCombos()` returns `{success, data:{combos:[{id,name,models[]}]}}`.
 
-## 7. Ubah jadwal cron hermes (JANGAN tulis jobs.json manual)
+## 7. Change the hermes cron schedule (do NOT write jobs.json by hand)
 
 ```bash
 hermes cron edit <job-id> --schedule "0 14,16,18,20 * * *"
-hermes cron list   # verifikasi di sumber otoritatif: store gateway, bukan file
+hermes cron list   # verify against the authoritative source: the gateway store, not the file
 ```
 
-`~/.hermes/cron/jobs.json` hanya cermin tampilan. Menulis `schedule` sebagai string biasa merusak
-`hermes cron list` (`'str' object has no attribute 'get'`) — field itu harus objek hasil
-`cron.jobs.parse_schedule(expr)`. Trigger `hermes cron run` di luar jendela jadwal akan dilewati diam-diam.
+`~/.hermes/cron/jobs.json` is only a display mirror. Writing `schedule` as a plain string breaks
+`hermes cron list` (`'str' object has no attribute 'get'`) — that field must be an object produced by
+`cron.jobs.parse_schedule(expr)`. Triggering `hermes cron run` outside the scheduled window is skipped
+silently.
 
-## 8. Jangan pernah cetak kredensial
+## 8. Never print credentials
 
-Muat ke variabel, pakai langsung, jangan echo:
+Load into a variable, use it directly, never echo it:
 
 ```bash
 KEY=$(grep -m1 -E '^(OPENAI_API_KEY|NINEROUTER_API_KEY)=' ~/.hermes/.env | cut -d= -f2-)

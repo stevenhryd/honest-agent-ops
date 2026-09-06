@@ -1,76 +1,77 @@
-# Sumber primer — dan apa yang TIDAK dijaminnya
+# Primary sources — and what they do NOT guarantee
 
-Diverifikasi 1 Sep 2026. Tiap baris di sini dikutip dari sumbernya sendiri, bukan dari ringkasan blog.
-Kolom terakhir yang paling berguna: **batas jaminannya**.
+Verified 1 Sep 2026. Every line here is quoted from the source itself, not from a blog summarizing it.
+The most useful part of each entry is the last one: **the limit of the guarantee**.
 
 ## systemd — `OnFailure=` / `OnSuccess=`
 
-Sumber: `systemd.unit(5)`, halaman man lokal (systemd 260, Arch).
+Source: `systemd.unit(5)`, local man page (systemd 260, Arch).
 
 > `OnFailure=` — "A space-separated list of one or more units that are activated when this unit enters
 > the **failed** state." (Added in version 201.)
 >
 > `OnSuccess=` — "…activated when this unit enters the **inactive** state." (Added in version 249.)
 
-**Batas jaminan:** hanya transisi *state*. Unit yang selesai `exit 0` tanpa mengerjakan apa pun masuk
-`inactive`, bukan `failed` — jadi `OnFailure=` **secara mekanis tak mungkin** menangkap run kosong, dan
-`OnSuccess=` justru menyala. Tak ada setelan systemd apa pun yang mengubah ini; deteksi run kosong harus
-datang dari perbandingan artefak, di luar systemd.
+**Limit of the guarantee:** state transitions only. A unit that finishes `exit 0` without doing any work
+enters `inactive`, not `failed` — so `OnFailure=` is **mechanically incapable** of catching an empty run,
+and `OnSuccess=` fires instead. No systemd setting changes this; empty-run detection has to come from
+artifact comparison, outside systemd.
 
-Catatan turunan: `SuccessExitStatus=` cuma memperluas daftar exit code yang dianggap sukses — memperlebar
-lubang, bukan menutupnya.
+Corollary: `SuccessExitStatus=` only widens the set of exit codes treated as success — it widens the hole
+rather than closing it.
 
 ## Prometheus — `absent()` / `absent_over_time()`
 
-Sumber: dokumentasi resmi PromQL, *Query functions*.
+Source: official PromQL documentation, *Query functions*.
 
-> `absent(v instant-vector)` — mengembalikan vektor kosong bila vektor masukan berisi elemen; mengembalikan
-> vektor 1-elemen bernilai `1` bila masukan tak punya elemen. "Useful for alerting on when no time series
-> exist for a given metric name and label combination."
+> `absent(v instant-vector)` — returns an empty vector if the input vector has elements; returns a
+> 1-element vector with the value `1` if the input has no elements. "Useful for alerting on when no time
+> series exist for a given metric name and label combination."
 >
-> `absent_over_time(v range-vector)` — varian rentang: `1` bila **tak ada sampel sama sekali** dalam rentang.
+> `absent_over_time(v range-vector)` — the range variant: `1` when **no samples at all** exist in the range.
 > "…for a certain amount of time."
 
-Contoh dari dokumen: `absent_over_time(nonexistent{job="myjob"}[1h])` → `{job="myjob"}`.
+Example from the docs: `absent_over_time(nonexistent{job="myjob"}[1h])` → `{job="myjob"}`.
 
-**Batas jaminan:** mendeteksi *ketiadaan sinyal*, bukan *kualitas hasil*. Job yang tetap mengirim metrik
-sambil menghasilkan nol tetap lolos. Metriknya karena itu harus **metrik keluaran** (jumlah artefak,
-baris ditulis), bukan metrik kehidupan (uptime, heartbeat).
+**Limit of the guarantee:** it detects the *absence of a signal*, not the *quality of a result*. A job that
+keeps emitting metrics while producing nothing still passes. The metric therefore has to be an **output
+metric** (artifact count, rows written), not a liveness metric (uptime, heartbeat).
 
-## healthchecks.io — model dead man's switch
+## healthchecks.io — the dead man's switch model
 
-Sumber: dokumentasi resmi.
+Source: official documentation.
 
-- Layanan "listens for HTTP requests (pings) from your job", **diam selama ping datang tepat waktu**, dan
-  **berbunyi saat ping tak datang**.
-- Tiga sinyal: ping biasa = sukses · `/start` = mulai · `/fail` = gagal eksplisit. Ada juga bentuk
-  `/<exitcode>`.
-- **Grace Time** = tambahan waktu sebelum alarm. Bila `/start` dipakai, grace time sekaligus jadi
-  **jarak maksimum yang diizinkan antara sinyal "start" dan "sukses"**.
+- The service "listens for HTTP requests (pings) from your job", **stays quiet while pings arrive on time**,
+  and **fires when a ping does not arrive**.
+- Three signals: a plain ping = success · `/start` = started · `/fail` = explicit failure. There is also a
+  `/<exitcode>` form.
+- **Grace Time** = extra time allowed before alerting. When `/start` is used, grace time doubles as the
+  **maximum permitted distance between the "start" signal and the success signal**.
 
-**Batas jaminan:** membuktikan job *mulai dan selesai*, bukan job *menghasilkan*. Pasangan `/start` +
-sukses menangkap job yang menguap di tengah — itu tepat kasus "rencana diumumkan, tulisan tak terjadi" —
-tapi tetap butuh kontrak artefak untuk menangkap job yang selesai rapi tanpa hasil.
+**Limit of the guarantee:** it proves a job *started and finished*, not that a job *produced*. The
+`/start` + success pair catches a job that evaporates mid-run — exactly the "intent announced, writing
+never happened" case — but an artifact contract is still needed to catch a job that finishes tidily with
+nothing to show.
 
 ## Google SRE Workbook — *Alerting on SLOs*
 
-Sumber: `sre.google/workbook/alerting-on-slos/`.
+Source: `sre.google/workbook/alerting-on-slos/`.
 
 > "Having good SLOs that measure the reliability of your platform, **as experienced by your customers**,
 > provides the highest-quality indication for when an on-call engineer should respond."
 
-Isi bab: burn rate terhadap error budget; strategi berlapis yang direkomendasikan — 2 % anggaran dalam
-1 jam (page), 5 % dalam 6 jam (page), 10 % dalam 3 hari (ticket).
+Chapter contents: burn rate against an error budget; the recommended multi-window strategy — 2% of budget
+in 1 hour (page), 5% in 6 hours (page), 10% in 3 days (ticket).
 
-**Batas jaminan — penting:** bab ini membahas layanan yang **melayani permintaan**. Kasus "sistem tampak
-sehat tapi tak menghasilkan keluaran" **tidak dibahas**, termasuk untuk layanan lalu-lintas rendah yang
-dibahas panjang lebar. Jangan mengutip SRE Workbook seolah ia menjawab masalah run kosong; prinsip
-"alert pada outcome" diambil, mekanismenya harus dibuat sendiri.
+**Limit of the guarantee — important:** this chapter is about services that **serve requests**. The case of
+"the system looks healthy but produces no output" is **not covered**, including in its lengthy treatment of
+low-traffic services. Do not cite the SRE Workbook as if it answers the empty-run problem; take the
+"alert on outcomes" principle from it, and design the mechanism yourself.
 
-## Yang sengaja TIDAK dijadikan sumber
+## Deliberately NOT used as sources
 
-Angka-angka populer soal observability agen (mis. "reranking +33–40 %", "cache hemat 40–80 %") beredar
-lewat blog lapis dua. Beberapa memang berujung ke penelitian nyata — contoh terverifikasi: klaim
-"hemat 85 % biaya sambil mempertahankan 95 % mutu GPT-4" berasal dari **RouteLLM** (arXiv 2406.18665,
-ICLR 2025, rute GPT-4 Turbo ↔ Mixtral 8x7B pada MT Bench), bukan dari blog yang mengutipnya. Aturan yang
-dipakai skill ini: **angka tanpa jalur ke sumber aslinya tidak dipakai sama sekali.**
+Popular figures about agent observability (e.g. "reranking +33–40%", "caching saves 40–80%") circulate
+through second-hand blogs. Some do trace back to real research — one verified example: the claim of
+"85% cost savings while retaining 95% of GPT-4 quality" originates from **RouteLLM** (arXiv 2406.18665,
+ICLR 2025, routing GPT-4 Turbo ↔ Mixtral 8x7B on MT Bench), not from the blogs quoting it. The rule this
+skill applies: **a number with no traceable path to its origin is not used at all.**
