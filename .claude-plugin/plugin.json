@@ -1,0 +1,17 @@
+{
+  "name": "honest-agent-ops",
+  "version": "1.0.0",
+  "description": "Make green status mean something. Three skills for cron/agent work that runs when nobody is looking: prove output instead of reporting exit codes, enforce delegation contracts by machine, and route around dead model tiers.",
+  "author": {
+    "name": "Steven Hariyadi",
+    "url": "https://github.com/stevenhryd"
+  },
+  "homepage": "https://github.com/stevenhryd/honest-agent-ops",
+  "repository": "https://github.com/stevenhryd/honest-agent-ops",
+  "license": "MIT",
+  "keywords": [
+    "cron", "systemd", "pm2", "watchdog", "silent-failure",
+    "llm", "structured-output", "gbnf", "json-schema",
+    "rate-limit", "fallback", "quota", "observability"
+  ]
+}

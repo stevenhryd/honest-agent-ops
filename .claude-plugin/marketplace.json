@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "honest-agent-ops",
+  "description": "Skills for work nobody is watching: unattended jobs that cannot report success without producing it, delegation contracts a machine can judge, and quota-aware model routing.",
+  "owner": {
+    "name": "Steven Hariyadi",
+    "url": "https://github.com/stevenhryd"
+  },
+  "plugins": [
+    {
+      "name": "honest-agent-ops",
+      "description": "Three skills for unattended agent operations: honest-automation, weak-model-delegation, llm-quota-routing.",
+      "source": "./",
+      "category": "devops"
+    }
+  ]
+}
